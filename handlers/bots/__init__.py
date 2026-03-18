@@ -100,6 +100,17 @@ from .controller_handlers import (  # Unified configs menu with multi-select; Ed
     handle_pmm_wizard_pair,
     handle_pmm_wizard_spreads,
     handle_pmm_wizard_tp,
+    handle_cmm_back,
+    handle_cmm_creds_ok,
+    handle_cmm_creds_reset,
+    handle_cmm_review_back,
+    handle_cmm_save,
+    handle_cmm_wizard_amount,
+    handle_cmm_wizard_connector,
+    handle_cmm_wizard_pair,
+    handle_cmm_wizard_spreads,
+    process_cmm_wizard_input,
+    show_new_cainvest_mm_form,
     handle_pv1_back,
     handle_pv1_pair_select,
     handle_pv1_review_back,
@@ -354,6 +365,9 @@ async def bots_callback_handler(
         elif main_action == "noop":
             pass  # Do nothing - used for pagination display button
 
+        elif main_action == "new_cainvest_mm":
+            await show_new_cainvest_mm_form(update, context)
+
         elif main_action == "new_grid_strike":
             await show_new_grid_strike_form(update, context)
 
@@ -362,6 +376,44 @@ async def bots_callback_handler(
 
         elif main_action == "new_pmm_v1":
             await show_new_pmm_v1_form(update, context)
+
+        # Cainvest MM wizard callbacks
+        elif main_action == "cmm_connector":
+            if len(action_parts) > 1:
+                connector = action_parts[1]
+                await handle_cmm_wizard_connector(update, context, connector)
+
+        elif main_action == "cmm_pair":
+            if len(action_parts) > 1:
+                pair = action_parts[1]
+                await handle_cmm_wizard_pair(update, context, pair)
+
+        elif main_action == "cmm_amount":
+            if len(action_parts) > 1:
+                amount = action_parts[1]
+                await handle_cmm_wizard_amount(update, context, amount)
+
+        elif main_action == "cmm_spreads":
+            if len(action_parts) > 1:
+                spread = action_parts[1]
+                await handle_cmm_wizard_spreads(update, context, spread)
+
+        elif main_action == "cmm_back":
+            if len(action_parts) > 1:
+                target = action_parts[1]
+                await handle_cmm_back(update, context, target)
+
+        elif main_action == "cmm_creds_ok":
+            await handle_cmm_creds_ok(update, context)
+
+        elif main_action == "cmm_creds_reset":
+            await handle_cmm_creds_reset(update, context)
+
+        elif main_action == "cmm_save":
+            await handle_cmm_save(update, context)
+
+        elif main_action == "cmm_review_back":
+            await handle_cmm_review_back(update, context)
 
         elif main_action == "pv1_connector":
             if len(action_parts) > 1:
@@ -855,6 +907,9 @@ async def bots_message_handler(
         # Handle PMM V1 wizard input
         elif bots_state == "pv1_wizard_input":
             await process_pv1_wizard_input(update, context, user_input)
+        # Handle Cainvest MM wizard input
+        elif bots_state == "cmm_wizard_input":
+            await process_cmm_wizard_input(update, context, user_input)
         # Handle config edit loop field input (legacy single field)
         elif bots_state.startswith("cfg_edit_input:"):
             await process_cfg_edit_input(update, context, user_input)

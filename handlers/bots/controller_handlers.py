@@ -77,6 +77,7 @@ CONFIGS_PER_PAGE = 8  # Reduced to leave space for action buttons
 def _get_controller_type_display(controller_name: str) -> tuple[str, str]:
     """Get display name and emoji for controller type"""
     type_map = {
+        "cainvest_mm": ("Cainvest MM", "🔗"),
         "grid_strike": ("Grid Strike", "📊"),
         "pmm_mister": ("PMM Mister", "📈"),
         "pmm_v1": ("PMM V1", "📈"),
@@ -8984,4 +8985,676 @@ async def handle_config_file_upload(
         await update.message.reply_text(
             format_error_message(f"Failed to upload config: {str(e)}"),
             parse_mode="MarkdownV2",
+        )
+
+
+# ============================================
+# CAINVEST MM WIZARD
+# ============================================
+
+from .controllers.cainvest_mm import validate_config as cmm_validate_config
+from .controllers.cainvest_mm import generate_id as cmm_generate_id
+
+
+async def show_new_cainvest_mm_form(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Start the Cainvest MM wizard - Step 1: Connector"""
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+
+    try:
+        client, _ = await get_bots_client(chat_id, context.user_data)
+        configs = await client.controllers.list_controller_configs()
+        context.user_data["controller_configs_list"] = configs
+    except Exception as e:
+        logger.warning(f"Could not fetch existing configs: {e}")
+
+    config = init_new_controller_config(context, "cainvest_mm")
+    context.user_data["bots_state"] = "cmm_wizard"
+    context.user_data["cmm_wizard_step"] = "connector_name"
+    context.user_data["cmm_wizard_message_id"] = query.message.message_id
+    context.user_data["cmm_wizard_chat_id"] = query.message.chat_id
+
+    await _show_cmm_wizard_connector_step(update, context)
+
+
+async def _show_cmm_wizard_connector_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 1: Select Connector"""
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+
+    try:
+        client, server_name = await get_bots_client(chat_id, context.user_data)
+        cex_connectors = await get_available_cex_connectors(
+            context.user_data, client, server_name=server_name
+        )
+
+        if not cex_connectors:
+            keyboard = [
+                [InlineKeyboardButton("🔑 Configure API Keys", callback_data="config_api_keys")],
+                [InlineKeyboardButton("« Back", callback_data="bots:main_menu")],
+            ]
+            await query.message.edit_text(
+                r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+                r"⚠️ No CEX connectors available\." + "\n\n"
+                r"Configure API keys for an exchange first\.",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
+        keyboard = []
+        row = []
+        for connector in cex_connectors:
+            row.append(
+                InlineKeyboardButton(f"🏦 {connector}", callback_data=f"bots:cmm_connector:{connector}")
+            )
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu")])
+
+        await query.message.edit_text(
+            r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+            r"*Step 1/6:* 🏦 Select Connector",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    except Exception as e:
+        logger.error(f"Error in Cainvest MM connector step: {e}", exc_info=True)
+        keyboard = [[InlineKeyboardButton("Back", callback_data="bots:main_menu")]]
+        await query.message.edit_text(
+            format_error_message(f"Error: {str(e)}"),
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+
+async def handle_cmm_wizard_connector(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, connector: str
+) -> None:
+    config = get_controller_config(context)
+    config["connector_name"] = connector
+    set_controller_config(context, config)
+    context.user_data["cmm_wizard_step"] = "trading_pair"
+    await _show_cmm_wizard_pair_step(update, context)
+
+
+async def _show_cmm_wizard_pair_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 2: Trading Pair"""
+    query = update.callback_query
+    config = get_controller_config(context)
+    connector = config.get("connector_name", "")
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    context.user_data["cmm_wizard_step"] = "trading_pair"
+
+    keyboard = [
+        [InlineKeyboardButton("USDC-BRL", callback_data="bots:cmm_pair:USDC-BRL")],
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:connector"),
+            InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+        ],
+    ]
+
+    await query.message.edit_text(
+        r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+        f"*Connector:* `{escape_markdown_v2(connector)}`" + "\n\n"
+        r"*Step 2/6:* 🔗 Trading Pair" + "\n\n"
+        r"Select or type a pair:",
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_cmm_wizard_pair(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, pair: str
+) -> None:
+    config = get_controller_config(context)
+    config["trading_pair"] = pair.upper()
+    set_controller_config(context, config)
+    context.user_data["cmm_wizard_step"] = "order_amount"
+    await _show_cmm_wizard_amount_step(update, context)
+
+
+async def _show_cmm_wizard_amount_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 3: Order Amount"""
+    query = update.callback_query
+    config = get_controller_config(context)
+    connector = config.get("connector_name", "")
+    pair = config.get("trading_pair", "")
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    context.user_data["cmm_wizard_step"] = "order_amount"
+
+    base_token = pair.split("-")[0] if "-" in pair else "USDC"
+    keyboard = [
+        [
+            InlineKeyboardButton("50", callback_data="bots:cmm_amount:50"),
+            InlineKeyboardButton("100", callback_data="bots:cmm_amount:100"),
+            InlineKeyboardButton("500", callback_data="bots:cmm_amount:500"),
+        ],
+        [
+            InlineKeyboardButton("1000", callback_data="bots:cmm_amount:1000"),
+            InlineKeyboardButton("5000", callback_data="bots:cmm_amount:5000"),
+            InlineKeyboardButton("10000", callback_data="bots:cmm_amount:10000"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:pair"),
+            InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+        ],
+    ]
+
+    await query.message.edit_text(
+        r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+        f"🏦 `{escape_markdown_v2(connector)}` \\| 🔗 `{escape_markdown_v2(pair)}`" + "\n\n"
+        f"*Step 3/6:* 💰 Order Amount \\({escape_markdown_v2(base_token)}\\)" + "\n\n"
+        r"Select or type amount:",
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_cmm_wizard_amount(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, amount: str
+) -> None:
+    config = get_controller_config(context)
+    config["order_amount"] = amount
+    set_controller_config(context, config)
+    context.user_data["cmm_wizard_step"] = "spreads"
+    await _show_cmm_wizard_spreads_step(update, context)
+
+
+async def _show_cmm_wizard_spreads_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 4: Spread"""
+    query = update.callback_query
+    config = get_controller_config(context)
+    connector = config.get("connector_name", "")
+    pair = config.get("trading_pair", "")
+    amount = config.get("order_amount", "100")
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    context.user_data["cmm_wizard_step"] = "spreads"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("0.1%", callback_data="bots:cmm_spreads:0.001"),
+            InlineKeyboardButton("0.2%", callback_data="bots:cmm_spreads:0.002"),
+            InlineKeyboardButton("0.3%", callback_data="bots:cmm_spreads:0.003"),
+        ],
+        [
+            InlineKeyboardButton("0.5%", callback_data="bots:cmm_spreads:0.005"),
+            InlineKeyboardButton("1.0%", callback_data="bots:cmm_spreads:0.01"),
+            InlineKeyboardButton("2.0%", callback_data="bots:cmm_spreads:0.02"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:amount"),
+            InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+        ],
+    ]
+
+    await query.message.edit_text(
+        r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+        f"🏦 `{escape_markdown_v2(connector)}` \\| 🔗 `{escape_markdown_v2(pair)}`" + "\n"
+        f"💰 Amount: `{escape_markdown_v2(str(amount))}`" + "\n\n"
+        r"*Step 4/6:* 📊 Spread" + "\n\n"
+        r"_Applied to both buy and sell\. Or type a custom value \(e\.g\. 0\.003\)_",
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_cmm_wizard_spreads(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, spread: str
+) -> None:
+    config = get_controller_config(context)
+    config["buy_spread"] = spread
+    config["sell_spread"] = spread
+    set_controller_config(context, config)
+    context.user_data["cmm_wizard_step"] = "cainvest_credentials"
+    await _show_cmm_wizard_credentials_step(update, context)
+
+
+async def _show_cmm_wizard_credentials_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 5: Cainvest API Credentials"""
+    query = update.callback_query
+    config = get_controller_config(context)
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    context.user_data["cmm_wizard_step"] = "cainvest_api_key"
+
+    has_key = bool(config.get("cainvest_api_key"))
+    has_secret = bool(config.get("cainvest_api_secret"))
+
+    if has_key and has_secret:
+        key_preview = config["cainvest_api_key"][:8] + "..."
+        secret_preview = config["cainvest_api_secret"][:8] + "..."
+        status = f"✅ Key: `{escape_markdown_v2(key_preview)}`\n✅ Secret: `{escape_markdown_v2(secret_preview)}`"
+        keyboard = [
+            [InlineKeyboardButton("✅ Keep & Continue", callback_data="bots:cmm_creds_ok")],
+            [InlineKeyboardButton("🔄 Re-enter", callback_data="bots:cmm_creds_reset")],
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:spreads"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+    else:
+        status = r"_No credentials set yet_"
+        keyboard = [
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:spreads"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+
+    await query.message.edit_text(
+        r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+        r"*Step 5/6:* 🔑 Cainvest API Credentials" + "\n\n"
+        + status + "\n\n"
+        r"Send your Cainvest API Key \(`ak_\.\.\.`\):",
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_cmm_creds_ok(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Credentials already set, skip to review."""
+    context.user_data["cmm_wizard_step"] = "review"
+    await _show_cmm_wizard_review_step(update, context)
+
+
+async def handle_cmm_creds_reset(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Clear credentials and re-prompt."""
+    config = get_controller_config(context)
+    config["cainvest_api_key"] = ""
+    config["cainvest_api_secret"] = ""
+    set_controller_config(context, config)
+    context.user_data["cmm_wizard_step"] = "cainvest_api_key"
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    await _show_cmm_wizard_credentials_step(update, context)
+
+
+async def _show_cmm_wizard_review_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cainvest MM Wizard Step 6: Review"""
+    query = update.callback_query
+    config = get_controller_config(context)
+
+    if not config.get("id"):
+        existing = context.user_data.get("controller_configs_list", [])
+        config["id"] = cmm_generate_id(config, existing)
+        set_controller_config(context, config)
+
+    context.user_data["bots_state"] = "cmm_wizard_input"
+    context.user_data["cmm_wizard_step"] = "review"
+
+    key_preview = (config.get("cainvest_api_key", "")[:8] + "...") if config.get("cainvest_api_key") else "NOT SET"
+    secret_preview = (config.get("cainvest_api_secret", "")[:8] + "...") if config.get("cainvest_api_secret") else "NOT SET"
+
+    config_block = (
+        f"id: {config.get('id', '')}\n"
+        f"connector_name: {config.get('connector_name', '')}\n"
+        f"trading_pair: {config.get('trading_pair', '')}\n"
+        f"order_amount: {config.get('order_amount', '100')}\n"
+        f"buy_spread: {config.get('buy_spread', '0.003')}\n"
+        f"sell_spread: {config.get('sell_spread', '0.003')}\n"
+        f"order_refresh_time: {config.get('order_refresh_time', 300)}\n"
+        f"cainvest_ws_url: {config.get('cainvest_ws_url', 'wss://api.spot.cainvest.io/ws')}\n"
+        f"cainvest_api_url: {config.get('cainvest_api_url', 'https://api.spot.cainvest.io/api/v1')}\n"
+        f"cainvest_api_key: {key_preview}\n"
+        f"cainvest_api_secret: {secret_preview}\n"
+        f"cainvest_currency_pair: {config.get('cainvest_currency_pair', 'USDC/BRL')}\n"
+        f"settlement_date: {config.get('settlement_date', 'D0')}"
+    )
+
+    pair = config.get("trading_pair", "")
+    message_text = (
+        f"*{escape_markdown_v2(pair)}* \\- Review Config\n\n"
+        f"```\n{config_block}\n```\n\n"
+        f"_To edit, send `field: value` lines_"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Save Config", callback_data="bots:cmm_save")],
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:creds"),
+            InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+        ],
+    ]
+
+    await query.message.edit_text(
+        message_text,
+        parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_cmm_back(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, target: str
+) -> None:
+    if target == "connector":
+        await _show_cmm_wizard_connector_step(update, context)
+    elif target == "pair":
+        await _show_cmm_wizard_pair_step(update, context)
+    elif target == "amount":
+        await _show_cmm_wizard_amount_step(update, context)
+    elif target == "spreads":
+        await _show_cmm_wizard_spreads_step(update, context)
+    elif target == "creds":
+        await _show_cmm_wizard_credentials_step(update, context)
+
+
+async def handle_cmm_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Save Cainvest MM config"""
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    config = get_controller_config(context)
+
+    is_valid, error = cmm_validate_config(config)
+    if not is_valid:
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_review_back")]]
+        await query.message.edit_text(
+            f"*Validation Error*\n\n{escape_markdown_v2(error or 'Unknown error')}",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    try:
+        client, _ = await get_bots_client(chat_id, context.user_data)
+        config_id = config.get("id", "")
+        result = await client.controllers.create_or_update_controller_config(config_id, config)
+
+        if result.get("status") == "success" or "success" in str(result).lower():
+            keyboard = [
+                [InlineKeyboardButton("Create Another", callback_data="bots:new_cainvest_mm")],
+                [InlineKeyboardButton("Deploy Now", callback_data="bots:deploy_menu")],
+                [InlineKeyboardButton("Back to Menu", callback_data="bots:controller_configs")],
+            ]
+            await query.message.edit_text(
+                r"*✅ Config Saved\!*" + "\n\n"
+                f"*ID:* `{escape_markdown_v2(config.get('id', ''))}`",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            clear_bots_state(context)
+        else:
+            error_msg = result.get("message", str(result))
+            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_review_back")]]
+            await query.message.edit_text(
+                f"*Save Failed*\n\n{escape_markdown_v2(error_msg[:200])}",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+
+    except Exception as e:
+        logger.error(f"Error saving Cainvest MM config: {e}", exc_info=True)
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_review_back")]]
+        await query.message.edit_text(
+            f"*Error*\n\n{escape_markdown_v2(str(e)[:200])}",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+
+async def handle_cmm_review_back(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    await _show_cmm_wizard_review_step(update, context)
+
+
+async def process_cmm_wizard_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str
+) -> None:
+    """Process text input during Cainvest MM wizard"""
+    step = context.user_data.get("cmm_wizard_step", "")
+    config = get_controller_config(context)
+    message_id = context.user_data.get("cmm_wizard_message_id")
+    chat_id = context.user_data.get("cmm_wizard_chat_id")
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    if step == "trading_pair":
+        pair = user_input.upper().strip()
+        if "-" not in pair:
+            pair = pair.replace("/", "-").replace("_", "-")
+        config["trading_pair"] = pair
+        set_controller_config(context, config)
+        context.user_data["cmm_wizard_step"] = "order_amount"
+
+        base_token = pair.split("-")[0] if "-" in pair else "USDC"
+        connector = config.get("connector_name", "")
+        keyboard = [
+            [
+                InlineKeyboardButton("50", callback_data="bots:cmm_amount:50"),
+                InlineKeyboardButton("100", callback_data="bots:cmm_amount:100"),
+                InlineKeyboardButton("500", callback_data="bots:cmm_amount:500"),
+            ],
+            [
+                InlineKeyboardButton("1000", callback_data="bots:cmm_amount:1000"),
+                InlineKeyboardButton("5000", callback_data="bots:cmm_amount:5000"),
+                InlineKeyboardButton("10000", callback_data="bots:cmm_amount:10000"),
+            ],
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:pair"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+            f"🏦 `{escape_markdown_v2(connector)}` \\| 🔗 `{escape_markdown_v2(pair)}`" + "\n\n"
+            f"*Step 3/6:* 💰 Order Amount \\({escape_markdown_v2(base_token)}\\)" + "\n\n"
+            r"Select or type amount:",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif step == "order_amount":
+        try:
+            amount_str = user_input.strip().replace(",", "")
+            amount = float(amount_str)
+            if amount <= 0:
+                raise ValueError("Amount must be positive")
+            config["order_amount"] = amount_str
+            set_controller_config(context, config)
+            context.user_data["cmm_wizard_step"] = "spreads"
+
+            connector = config.get("connector_name", "")
+            pair = config.get("trading_pair", "")
+            keyboard = [
+                [
+                    InlineKeyboardButton("0.1%", callback_data="bots:cmm_spreads:0.001"),
+                    InlineKeyboardButton("0.2%", callback_data="bots:cmm_spreads:0.002"),
+                    InlineKeyboardButton("0.3%", callback_data="bots:cmm_spreads:0.003"),
+                ],
+                [
+                    InlineKeyboardButton("0.5%", callback_data="bots:cmm_spreads:0.005"),
+                    InlineKeyboardButton("1.0%", callback_data="bots:cmm_spreads:0.01"),
+                    InlineKeyboardButton("2.0%", callback_data="bots:cmm_spreads:0.02"),
+                ],
+                [
+                    InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:amount"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+                ],
+            ]
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+                f"🏦 `{escape_markdown_v2(connector)}` \\| 🔗 `{escape_markdown_v2(pair)}`" + "\n"
+                f"💰 Amount: `{escape_markdown_v2(amount_str)}`" + "\n\n"
+                r"*Step 4/6:* 📊 Spread" + "\n\n"
+                r"_Applied to both buy and sell\. Or type a custom value \(e\.g\. 0\.003\)_",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except ValueError:
+            pass
+
+    elif step == "spreads":
+        try:
+            spread_str = user_input.strip()
+            spread = float(spread_str)
+            if spread < 0:
+                raise ValueError("Spread must be non-negative")
+            config["buy_spread"] = spread_str
+            config["sell_spread"] = spread_str
+            set_controller_config(context, config)
+            context.user_data["cmm_wizard_step"] = "cainvest_api_key"
+            context.user_data["bots_state"] = "cmm_wizard_input"
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:spreads"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+                ],
+            ]
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+                r"*Step 5/6:* 🔑 Cainvest API Credentials" + "\n\n"
+                r"Send your Cainvest API Key \(`ak_\.\.\.`\):",
+                parse_mode="MarkdownV2",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except ValueError:
+            pass
+
+    elif step == "cainvest_api_key":
+        api_key = user_input.strip()
+        config["cainvest_api_key"] = api_key
+        set_controller_config(context, config)
+        context.user_data["cmm_wizard_step"] = "cainvest_api_secret"
+
+        key_preview = api_key[:8] + "..." if len(api_key) > 8 else api_key
+        keyboard = [
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:spreads"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=r"*🔗 Cainvest MM \- New Config*" + "\n\n"
+            r"*Step 5/6:* 🔑 Cainvest API Credentials" + "\n\n"
+            f"✅ Key: `{escape_markdown_v2(key_preview)}`" + "\n\n"
+            r"Now send your Cainvest API Secret \(`sk_\.\.\.`\):",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif step == "cainvest_api_secret":
+        api_secret = user_input.strip()
+        config["cainvest_api_secret"] = api_secret
+        set_controller_config(context, config)
+        context.user_data["cmm_wizard_step"] = "review"
+
+        # Generate ID and show review
+        if not config.get("id"):
+            existing = context.user_data.get("controller_configs_list", [])
+            config["id"] = cmm_generate_id(config, existing)
+            set_controller_config(context, config)
+
+        key_preview = (config.get("cainvest_api_key", "")[:8] + "...") if config.get("cainvest_api_key") else "NOT SET"
+        secret_preview = (api_secret[:8] + "...") if len(api_secret) > 8 else api_secret
+
+        config_block = (
+            f"id: {config.get('id', '')}\n"
+            f"connector_name: {config.get('connector_name', '')}\n"
+            f"trading_pair: {config.get('trading_pair', '')}\n"
+            f"order_amount: {config.get('order_amount', '100')}\n"
+            f"buy_spread: {config.get('buy_spread', '0.003')}\n"
+            f"sell_spread: {config.get('sell_spread', '0.003')}\n"
+            f"order_refresh_time: {config.get('order_refresh_time', 300)}\n"
+            f"cainvest_ws_url: {config.get('cainvest_ws_url', 'wss://api.spot.cainvest.io/ws')}\n"
+            f"cainvest_api_url: {config.get('cainvest_api_url', 'https://api.spot.cainvest.io/api/v1')}\n"
+            f"cainvest_api_key: {key_preview}\n"
+            f"cainvest_api_secret: {secret_preview}\n"
+            f"cainvest_currency_pair: {config.get('cainvest_currency_pair', 'USDC/BRL')}\n"
+            f"settlement_date: {config.get('settlement_date', 'D0')}"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Save Config", callback_data="bots:cmm_save")],
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:creds"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"*{escape_markdown_v2(config.get('trading_pair', ''))}* \\- Review Config\n\n"
+            f"```\n{config_block}\n```\n\n"
+            f"_To edit, send `field: value` lines_",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif step == "review":
+        # Handle key=value edits in review
+        lines = user_input.strip().split("\n")
+        for line in lines:
+            if ":" in line:
+                field, _, value = line.partition(":")
+                field = field.strip()
+                value = value.strip()
+                if field in config:
+                    config[field] = value
+        set_controller_config(context, config)
+
+        # Re-show review
+        key_preview = (config.get("cainvest_api_key", "")[:8] + "...") if config.get("cainvest_api_key") else "NOT SET"
+        secret_preview = (config.get("cainvest_api_secret", "")[:8] + "...") if config.get("cainvest_api_secret") else "NOT SET"
+        config_block = (
+            f"id: {config.get('id', '')}\n"
+            f"connector_name: {config.get('connector_name', '')}\n"
+            f"trading_pair: {config.get('trading_pair', '')}\n"
+            f"order_amount: {config.get('order_amount', '100')}\n"
+            f"buy_spread: {config.get('buy_spread', '0.003')}\n"
+            f"sell_spread: {config.get('sell_spread', '0.003')}\n"
+            f"order_refresh_time: {config.get('order_refresh_time', 300)}\n"
+            f"cainvest_ws_url: {config.get('cainvest_ws_url', 'wss://api.spot.cainvest.io/ws')}\n"
+            f"cainvest_api_url: {config.get('cainvest_api_url', 'https://api.spot.cainvest.io/api/v1')}\n"
+            f"cainvest_api_key: {key_preview}\n"
+            f"cainvest_api_secret: {secret_preview}\n"
+            f"cainvest_currency_pair: {config.get('cainvest_currency_pair', 'USDC/BRL')}\n"
+            f"settlement_date: {config.get('settlement_date', 'D0')}"
+        )
+        keyboard = [
+            [InlineKeyboardButton("✅ Save Config", callback_data="bots:cmm_save")],
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="bots:cmm_back:creds"),
+                InlineKeyboardButton("❌ Cancel", callback_data="bots:main_menu"),
+            ],
+        ]
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"*{escape_markdown_v2(config.get('trading_pair', ''))}* \\- Review Config\n\n"
+            f"```\n{config_block}\n```\n\n"
+            f"_Updated\\! To edit more, send `field: value` lines_",
+            parse_mode="MarkdownV2",
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
