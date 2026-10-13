@@ -816,7 +816,11 @@ async def _fetch_trade_data_background(
                 prices = await client.market_data.get_prices(
                     connector_name=connector, trading_pairs=trading_pair
                 )
-                current_price = prices["prices"].get(trading_pair, 1)
+                current_price = prices["prices"].get(trading_pair, 0)
+                if not current_price or float(current_price) <= 0:
+                    raise ValueError(
+                        f"No valid price available for {trading_pair}. Please wait for market data."
+                    )
                 volume = volume / current_price
 
             # Fetch BUY and SELL quotes
@@ -970,7 +974,11 @@ async def handle_trade_get_quote(
             prices = await client.market_data.get_prices(
                 connector_name=connector, trading_pairs=trading_pair
             )
-            current_price = prices["prices"].get(trading_pair, 1)
+            current_price = prices["prices"].get(trading_pair, 0)
+            if not current_price or float(current_price) <= 0:
+                raise ValueError(
+                    f"No valid price available for {trading_pair}. Please wait for market data."
+                )
             volume = volume / current_price
 
         # Fetch BUY and SELL quotes in parallel
@@ -1457,6 +1465,10 @@ async def handle_trade_execute(
                 connector_name=connector, trading_pairs=trading_pair
             )
             current_price = prices["prices"][trading_pair]
+            if not current_price or float(current_price) <= 0:
+                raise ValueError(
+                    f"No valid price available for {trading_pair}. Please wait for market data."
+                )
             amount_float = usd_value / current_price
         else:
             amount_float = float(amount)
@@ -1673,6 +1685,10 @@ async def process_trade(
                 connector_name=connector, trading_pairs=trading_pair
             )
             current_price = prices["prices"][trading_pair]
+            if not current_price or float(current_price) <= 0:
+                raise ValueError(
+                    f"No valid price available for {trading_pair}. Please wait for market data."
+                )
             amount_float = usd_value / current_price
         else:
             amount_float = float(amount)

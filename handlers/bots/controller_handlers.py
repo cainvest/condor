@@ -4875,7 +4875,7 @@ DEPLOY_DEFAULTS = {
     "controllers_config": [],
     "max_global_drawdown_quote": None,
     "max_controller_drawdown_quote": None,
-    "image": "hummingbot/hummingbot:latest",
+    "image": "cainvest/hummingbot:latest",
 }
 
 # Deploy field configuration for progressive flow
@@ -4913,7 +4913,7 @@ DEPLOY_FIELDS = {
         "required": False,
         "hint": "Hummingbot image to use",
         "type": "str",
-        "default": "hummingbot/hummingbot:latest",
+        "default": "cainvest/hummingbot:latest",
     },
 }
 
@@ -5068,7 +5068,7 @@ async def show_deploy_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     controllers_str = ", ".join(controllers) if controllers else "None"
     max_global = deploy_params.get("max_global_drawdown_quote")
     max_controller = deploy_params.get("max_controller_drawdown_quote")
-    image = deploy_params.get("image", "hummingbot/hummingbot:latest")
+    image = deploy_params.get("image", "cainvest/hummingbot:latest")
 
     lines.append(f"*Instance Name*\\*: `{escape_markdown_v2(instance)}`")
     lines.append(f"*Credentials Profile*\\*: `{escape_markdown_v2(creds)}`")
@@ -5606,7 +5606,7 @@ async def handle_execute_deploy(
             max_controller_drawdown_quote=deploy_params.get(
                 "max_controller_drawdown_quote"
             ),
-            image=deploy_params.get("image", "hummingbot/hummingbot:latest"),
+            image=deploy_params.get("image", "cainvest/hummingbot:latest"),
         )
 
         # Clear deploy state
@@ -5667,7 +5667,7 @@ async def handle_execute_deploy(
 
 # Available docker images
 AVAILABLE_IMAGES = [
-    "hummingbot/hummingbot:latest",
+    "cainvest/hummingbot:latest",
     "hummingbot/hummingbot:development",
 ]
 
@@ -5709,7 +5709,7 @@ async def show_deploy_config_step(
         deploy_params = {
             "controllers_config": controller_names,
             "credentials_profile": creds_default,
-            "image": "hummingbot/hummingbot:latest",
+            "image": "cainvest/hummingbot:latest",
             "instance_name": creds_default,  # Default name = credentials profile
         }
     context.user_data["deploy_params"] = deploy_params
@@ -5718,7 +5718,7 @@ async def show_deploy_config_step(
 
     # Build message
     creds = deploy_params.get("credentials_profile", "master_account")
-    image = deploy_params.get("image", "hummingbot/hummingbot:latest")
+    image = deploy_params.get("image", "cainvest/hummingbot:latest")
     instance_name = deploy_params.get("instance_name", creds)
 
     # Build controllers list in code block for readability
@@ -5842,7 +5842,7 @@ async def handle_select_image(
     if image == "_show":
         # Show available images
         deploy_params = context.user_data.get("deploy_params", {})
-        current = deploy_params.get("image", "hummingbot/hummingbot:latest")
+        current = deploy_params.get("image", "cainvest/hummingbot:latest")
 
         lines = [
             r"*Select Docker Image*",
@@ -5962,7 +5962,7 @@ async def process_instance_name_input(
         # Create a fake update/query to reuse show_deploy_config_step logic
         # We need to update the existing message, so we'll do it manually
         creds = deploy_params.get("credentials_profile", "master_account")
-        image = deploy_params.get("image", "hummingbot/hummingbot:latest")
+        image = deploy_params.get("image", "cainvest/hummingbot:latest")
         controllers = deploy_params.get("controllers_config", [])
 
         controllers_block = "\n".join(controllers)
@@ -6028,7 +6028,7 @@ async def handle_deploy_confirm(
     deploy_params = context.user_data.get("deploy_params", {})
     controllers = deploy_params.get("controllers_config", [])
     creds = deploy_params.get("credentials_profile", "master_account")
-    image = deploy_params.get("image", "hummingbot/hummingbot:latest")
+    image = deploy_params.get("image", "cainvest/hummingbot:latest")
 
     if not controllers:
         await query.answer("No controllers selected", show_alert=True)
@@ -6121,7 +6121,7 @@ async def process_deploy_custom_name_input(
 
     controllers = deploy_params.get("controllers_config", [])
     creds = deploy_params.get("credentials_profile", "master_account")
-    image = deploy_params.get("image", "hummingbot/hummingbot:latest")
+    image = deploy_params.get("image", "cainvest/hummingbot:latest")
 
     controllers_str = ", ".join([f"`{escape_markdown_v2(c)}`" for c in controllers])
 

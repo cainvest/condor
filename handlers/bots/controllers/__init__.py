@@ -16,6 +16,7 @@ from .cainvest_mm import CainvestMMController
 from .grid_strike import GridStrikeController
 from .pmm_mister import PmmMisterController
 from .pmm_v1 import PmmV1Controller
+from .xemm_multiple_levels import XemmMultipleLevelsController
 
 # Registry of controller types
 _CONTROLLER_REGISTRY: Dict[str, Type[BaseController]] = {
@@ -23,6 +24,7 @@ _CONTROLLER_REGISTRY: Dict[str, Type[BaseController]] = {
     "grid_strike": GridStrikeController,
     "pmm_mister": PmmMisterController,
     "pmm_v1": PmmV1Controller,
+    "xemm_multiple_levels": XemmMultipleLevelsController,
 }
 
 
@@ -105,6 +107,7 @@ __all__ = [
     "GridStrikeController",
     "PmmMisterController",
     "PmmV1Controller",
+    "XemmMultipleLevelsController",
     # Backwards compatibility
     "SUPPORTED_CONTROLLERS",
 ]
